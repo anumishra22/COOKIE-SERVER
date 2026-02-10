@@ -629,7 +629,7 @@
                     <div class="file-drop" id="dropZone">
                         <input type="file" id="fileInput" accept=".txt">
                         <div class="file-icon">📁</div>
-                        <div>Drop file here or click to browse</div>
+                        <div id="fileLabel">Drop file here or click to browse</div>
                         <small style="color: rgba(255,255,255,0.4); margin-top: 5px; display: block;">.txt files only</small>
                     </div>
                 </div>
@@ -677,228 +677,162 @@
             reconnectCount: 0,
             
             elements: {
-                connStatus: document.getElementById('connStatus'),
                 connDot: document.getElementById('connDot'),
                 connText: document.getElementById('connText'),
                 uptime: document.getElementById('uptimeVal'),
                 active: document.getElementById('activeVal'),
                 sent: document.getElementById('sentVal'),
-                taskPanel: document.getElementById('activePanel'),
-                taskContainer: document.getElementById('taskContainer'),
-                terminal: document.getElementById('terminal'),
-                dropZone: document.getElementById('dropZone'),
-                fileInput: document.getElementById('fileInput'),
                 cookieInput: document.getElementById('cookieInput'),
+                fileInput: document.getElementById('fileInput'),
                 threadInput: document.getElementById('threadInput'),
                 delayInput: document.getElementById('delayInput'),
                 hatersInput: document.getElementById('hatersInput'),
-                deployBtn: document.getElementById('deployBtn')
+                deployBtn: document.getElementById('deployBtn'),
+                terminal: document.getElementById('terminal'),
+                taskContainer: document.getElementById('taskContainer'),
+                activePanel: document.getElementById('activePanel'),
+                dropZone: document.getElementById('dropZone'),
+                fileLabel: document.getElementById('fileLabel')
             },
 
             init() {
                 this.connect();
-                this.bindEvents();
+                this.setupEventListeners();
+                setInterval(() => this.updateMetrics(), 2000);
             },
 
             connect() {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const url = `${protocol}//${window.location.host}/ws`;
-                
-                this.ws = new WebSocket(url);
-                
-                this.ws.onopen = () => {
-                    this.updateConnection(true);
-                    this.reconnectCount = 0;
-                    this.log('Connected to command server', 'success');
-                    
-                    setInterval(() => {
-                        if (this.ws.readyState === WebSocket.OPEN) {
-                            this.ws.send(JSON.stringify({ type: 'monitor' }));
-                        }
-                    }, 2000);
-                };
+                const protocol = location.protocol === "https:" ? "wss://" : "ws://";
+                this.ws = new WebSocket(`${protocol}${location.host}/ws`);
 
-                this.ws.onmessage = (e) => {
-                    try {
-                        const data = JSON.parse(e.data);
-                        this.handleMessage(data);
-                    } catch (err) {
-                        this.log('Corrupted data received', 'error');
-                    }
+                this.ws.onopen = () => {
+                    this.elements.connDot.className = 'conn-dot conn-online';
+                    this.elements.connText.innerText = 'ONLINE';
+                    this.log('System connection established.', 'success');
                 };
 
                 this.ws.onclose = () => {
-                    this.updateConnection(false);
-                    if (this.reconnectCount < 5) {
-                        this.reconnectCount++;
-                        setTimeout(() => this.connect(), 3000);
-                    }
+                    this.elements.connDot.className = 'conn-dot conn-offline';
+                    this.elements.connText.innerText = 'OFFLINE';
+                    this.log('Connection lost. Retrying...', 'error');
+                    setTimeout(() => this.connect(), 5000);
                 };
 
-                this.ws.onerror = () => {
-                    this.log('Connection error', 'error');
+                this.ws.onmessage = (e) => {
+                    const data = JSON.parse(e.data);
+                    this.handleMessage(data);
                 };
-            },
-
-            updateConnection(online) {
-                const { connDot, connText } = this.elements;
-                if (online) {
-                    connDot.className = 'conn-dot conn-online';
-                    connText.textContent = 'ONLINE';
-                } else {
-                    connDot.className = 'conn-dot conn-offline';
-                    connText.textContent = 'OFFLINE';
-                }
             },
 
             handleMessage(data) {
                 switch(data.type) {
                     case 'monitor_data':
-                        this.elements.uptime.textContent = data.uptime;
-                        this.elements.active.textContent = data.activeTasks;
-                        this.elements.sent.textContent = data.totalSent;
+                        this.elements.uptime.innerText = data.uptime;
+                        this.elements.active.innerText = data.activeTasks;
+                        this.elements.sent.innerText = data.totalSent;
                         break;
-                        
                     case 'log':
-                        const type = data.message.includes('✅') ? 'success' : 
-                                    data.message.includes('❌') ? 'error' : 'info';
-                        this.log(data.message, type);
+                        this.log(data.message, data.message.includes('✅') ? 'success' : (data.message.includes('❌') ? 'error' : 'info'));
                         break;
-                        
                     case 'task_started':
-                        this.log(`Operation ${data.taskId.slice(0,8)} initiated`, 'success');
-                        this.tasks.set(data.taskId, {
-                            id: data.taskId,
-                            thread: this.elements.threadInput.value,
-                            delay: this.elements.delayInput.value,
-                            time: Date.now()
-                        });
-                        this.renderTasks();
+                        this.log(`Deployment successful: ${data.taskId}`, 'success');
+                        this.addTask(data.taskId);
                         break;
-                        
                     case 'stopped':
-                        this.log(`Operation ${data.taskId.slice(0,8)} terminated`, 'warn');
-                        this.tasks.delete(data.taskId);
-                        this.renderTasks();
+                        this.log(`Task terminated: ${data.taskId}`, 'warn');
+                        this.removeTask(data.taskId);
                         break;
                 }
             },
 
-            log(message, type = 'info') {
-                const time = new Date().toLocaleTimeString('en-US', {hour12: false});
-                const line = document.createElement('div');
-                line.className = 'terminal-line';
-                line.innerHTML = `
-                    <span class="timestamp">[${time}]</span>
-                    <span class="msg-${type}">${message}</span>
-                `;
-                this.elements.terminal.appendChild(line);
-                this.elements.terminal.scrollTop = this.elements.terminal.scrollHeight;
-                
-                // Limit lines
-                while (this.elements.terminal.children.length > 50) {
-                    this.elements.terminal.removeChild(this.elements.terminal.firstChild);
-                }
-            },
-
-            renderTasks() {
-                const container = this.elements.taskContainer;
-                const panel = this.elements.taskPanel;
-                
-                if (this.tasks.size === 0) {
-                    panel.style.display = 'none';
-                    return;
-                }
-                
-                panel.style.display = 'block';
-                container.innerHTML = Array.from(this.tasks.values()).map(task => `
-                    <div class="task-item">
-                        <div class="task-meta">
-                            <div class="task-id">ID: ${task.id.slice(0,12)}...</div>
-                            <div class="task-detail">Thread: ${task.thread} | Delay: ${task.delay}s</div>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 15px;">
-                            <span class="status-pill status-active">Active</span>
-                            <button class="btn-kill" onclick="App.killTask('${task.id}')">Abort</button>
-                        </div>
-                    </div>
-                `).join('');
-                
-                this.elements.active.textContent = this.tasks.size;
-            },
-
-            killTask(id) {
-                if (this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({ type: 'stop_by_id', taskId: id }));
-                    this.log(`Abort signal sent for ${id.slice(0,8)}`, 'warn');
-                }
-            },
-
-            bindEvents() {
-                const { dropZone, fileInput, deployBtn } = this.elements;
-                
-                // File handling
-                fileInput.addEventListener('change', (e) => {
-                    if (e.target.files[0]) {
-                        dropZone.classList.add('has-file');
-                        dropZone.querySelector('div:last-of-type').textContent = e.target.files[0].name;
+            setupEventListeners() {
+                this.elements.deployBtn.onclick = () => this.deploy();
+                this.elements.fileInput.onchange = (e) => {
+                    if(e.target.files[0]) {
+                        this.elements.fileLabel.innerText = e.target.files[0].name;
+                        this.elements.dropZone.classList.add('has-file');
                     }
-                });
-
-                // Deploy
-                deployBtn.addEventListener('click', () => this.deploy());
+                };
             },
 
             deploy() {
-                const file = this.elements.fileInput.files[0];
-                const cookie = this.elements.cookieInput.value.trim();
+                const cookies = this.elements.cookieInput.value.trim();
                 const thread = this.elements.threadInput.value.trim();
-                const delay = parseInt(this.elements.delayInput.value) || 5;
+                const file = this.elements.fileInput.files[0];
+                const delay = this.elements.delayInput.value;
                 const haters = this.elements.hatersInput.value;
 
-                if (!file) {
-                    this.log('No payload file selected', 'error');
-                    return;
-                }
-                if (!cookie) {
-                    this.log('Authentication required', 'error');
-                    return;
-                }
-                if (!thread) {
-                    this.log('Target thread ID required', 'error');
-                    return;
+                if(!cookies || !thread || !file) {
+                    return this.log('Deployment aborted: Missing required parameters.', 'error');
                 }
 
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    const payload = {
+                    this.ws.send(JSON.stringify({
                         type: 'start',
-                        cookieContent: cookie,
+                        cookieContent: cookies,
                         messageContent: e.target.result,
                         threadID: thread,
                         delay: delay,
                         hatersName: haters
-                    };
-
-                    if (this.ws.readyState === WebSocket.OPEN) {
-                        this.ws.send(JSON.stringify(payload));
-                        this.log('Deployment sequence initiated...', 'info');
-                        this.elements.deployBtn.innerHTML = '<span class="spinner"></span> Deploying...';
-                        
-                        setTimeout(() => {
-                            this.elements.deployBtn.textContent = 'Initiate Sequence';
-                        }, 2000);
-                    } else {
-                        this.log('Server unreachable', 'error');
-                    }
+                    }));
+                    this.log('Initiating sequence...', 'info');
                 };
                 reader.readAsText(file);
+            },
+
+            addTask(id) {
+                this.elements.activePanel.style.display = 'block';
+                if(!this.tasks.has(id)) {
+                    const div = document.createElement('div');
+                    div.className = 'task-item';
+                    div.id = `task-${id}`;
+                    div.innerHTML = `
+                        <div class="task-meta">
+                            <div class="task-id">${id.substr(0,8)}...</div>
+                            <div class="task-detail">Thread: ${this.elements.threadInput.value}</div>
+                        </div>
+                        <div style="display: flex; gap: 15px; align-items: center;">
+                            <span class="status-pill status-active">ACTIVE</span>
+                            <button class="btn-kill" onclick="App.stopTask('${id}')">Stop</button>
+                        </div>
+                    `;
+                    this.elements.taskContainer.appendChild(div);
+                    this.tasks.set(id, true);
+                }
+            },
+
+            removeTask(id) {
+                const el = document.getElementById(`task-${id}`);
+                if(el) el.remove();
+                this.tasks.delete(id);
+                if(this.tasks.size === 0) this.elements.activePanel.style.display = 'none';
+            },
+
+            stopTask(id) {
+                this.ws.send(JSON.stringify({ type: 'stop_by_id', taskId: id }));
+            },
+
+            updateMetrics() {
+                if(this.ws && this.ws.readyState === 1) {
+                    this.ws.send(JSON.stringify({ type: 'monitor' }));
+                }
+            },
+
+            log(msg, type = 'info') {
+                const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+                const line = document.createElement('div');
+                line.className = 'terminal-line';
+                line.innerHTML = `
+                    <span class="timestamp">${time}</span>
+                    <span class="msg-${type}">${msg}</span>
+                `;
+                this.elements.terminal.appendChild(line);
+                this.elements.terminal.scrollTop = this.elements.terminal.scrollHeight;
             }
         };
 
-        // Initialize
         App.init();
-        window.App = App; // Global access for onclick handlers
     </script>
 </body>
 </html>
