@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group Photo Locker</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            padding: 20px;
+        }
+
+        .header h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5em;
+        }
+
+        .icon {
+            font-size: 1.3em;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            color: #555;
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.3s;
+            font-family: 'Courier New', monospace;
+        }
+
+        input[type="text"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        /* Photo Upload Styles */
+        .photo-upload {
+            border: 3px dashed #ccc;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #fafafa;
+        }
+
+        .photo-upload:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .photo-upload.dragover {
+            border-color: #667eea;
+            background: #e8eeff;
+            transform: scale(1.02);
+        }
+
+        .photo-upload input[type="file"] {
+            display: none;
+        }
+
+        .upload-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #999;
+            font-size: 13px;
+        }
+
+        .photo-preview {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .photo-preview.active {
+            display: block;
+        }
+
+        .preview-img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .photo-name {
+            margin-top: 10px;
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+
+        .btn {
+            padding: 15px 40px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(17, 153, 142, 0.4);
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(235, 51, 73, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-left: 15px;
+        }
+
+        .status-online {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .logs-container {
+            background: #1a1a2e;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .logs-header {
+            color: #fff;
+            margin-bottom: 15px;
+            font-size: 14px;
+            opacity: 0.7;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .clear-logs {
+            background: #333;
+            color: #fff;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 8px 0;
+            border-bottom: 1px solid #2d2d44;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .log-time {
+            color: #666;
+            min-width: 80px;
+        }
+
+        .log-info { color: #00d4ff; }
+        .log-success { color: #00ff88; }
+        .log-error { color: #ff4757; }
+        .log-warn { color: #ffa502; }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            color: #1565c0;
+            font-size: 14px;
+        }
+
+        .commands-help {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .commands-help h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .cmd-item {
+            display: flex;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .cmd-item:last-child {
+            border-bottom: none;
+        }
+
+        .cmd-name {
+            font-weight: 600;
+            color: #667eea;
+            min-width: 100px;
+        }
+
+        .cmd-desc {
+            color: #666;
+        }
+
+        .remove-photo {
+            color: #e74c3c;
+            cursor: pointer;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+
+        .remove-photo:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔒 Group Photo Locker</h1>
+            <p>Upload Photo • Start Bot • Auto-Protect</p>
+        </div>
+
+        <!-- Configuration -->
+        <div class="card">
+            <h2>
+                <span class="icon">⚙️</span> 
+                Bot Configuration
+                <span id="statusBadge" class="status-badge status-offline">
+                    <span>●</span> OFFLINE
+                </span>
+            </h2>
+
+            <div class="info-box">
+                ℹ️ Fill details below, upload lock photo, and start the bot
+            </div>
+
+            <div class="form-group">
+                <label for="adminUid">👤 Admin UID (Your Facebook ID)</label>
+                <input type="text" id="adminUid" placeholder="e.g., 100012345678901">
+            </div>
+
+            <div class="form-group">
+                <label for="appState">🔑 AppState JSON</label>
+                <textarea id="appState" placeholder='Paste your appstate.json content here...'></textarea>
+            </div>
+
+            <!-- Photo Upload -->
+            <div class="form-group">
+                <label>📸 Lock Photo (eric.png)</label>
+                <div class="photo-upload" id="dropZone" onclick="document.getElementById('photoInput').click()">
+                    <input type="file" id="photoInput" accept="image/*" onchange="handlePhotoSelect(event)">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Click to upload or drag & drop photo</div>
+                    <div class="upload-hint">Supported: JPG, PNG, GIF (Max 10MB)</div>
+                </div>
+                
+                <div class="photo-preview" id="photoPreview">
+                    <img class="preview-img" id="previewImg" src="" alt="Preview">
+                    <div class="photo-name" id="photoName"></div>
+                    <div class="remove-photo" onclick="removePhoto(event)">❌ Remove photo</div>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-start" id="startBtn" onclick="startBot()">
+                    🚀 Start Bot
+                </button>
+                <button class="btn btn-stop" id="stopBtn" onclick="stopBot()" disabled>
+                    ⏹️ Stop Bot
+                </button>
+            </div>
+        </div>
+
+        <!-- Live Logs -->
+        <div class="card">
+            <h2><span class="icon">📺</span> Live Logs</h2>
+            
+            <div class="logs-container">
+                <div class="logs-header">
+                    <span>Bot Activity</span>
+                    <button class="clear-logs" onclick="clearLogs()">Clear</button>
+                </div>
+                <div id="logsContent">
+                    <div class="log-entry">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-info">Waiting to start...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="commands-help">
+                <h3>🎮 Messenger Commands</h3>
+                <div class="cmd-item">
+                    <span class="cmd-name">/glock</span>
+                    <span class="cmd-desc">Lock group photo (Admin) - Auto-reverts changes</span>
+                </div>
+                <div class="cmd-item">
+                    <span class="cmd-name">/gcunlock</span>
+                    <span class="cmd-desc">Unlock group photo (Admin)</span>
+                </div>
+                <div class="cmd-item">
+                    <span class="cmd-name">/gcstatus</span>
+                    <span class="cmd-desc">Check lock status</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const logsContent = document.getElementById('logsContent');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusBadge = document.getElementById('statusBadge');
+        const dropZone = document.getElementById('dropZone');
+        
+        let selectedPhoto = null;
+
+        // Drag & drop handlers
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processPhoto(files[0]);
+            }
+        });
+
+        function handlePhotoSelect(event) {
+            const file = event.target.files[0];
+            if (file) processPhoto(file);
+        }
+
+        function processPhoto(file) {
+            // Validate
+            if (!file.type.startsWith('image/')) {
+                addLog('❌ Please select an image file', 'error');
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                addLog('❌ File too large (max 10MB)', 'error');
+                return;
+            }
+
+            selectedPhoto = file;
+            
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('previewImg').src = e.target.result;
+                document.getElementById('photoName').textContent = file.name;
+                document.getElementById('photoPreview').classList.add('active');
+                dropZone.style.display = 'none';
+                addLog('✅ Photo loaded: ' + file.name, 'success');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function removePhoto(e) {
+            e.stopPropagation();
+            selectedPhoto = null;
+            document.getElementById('photoInput').value = '';
+            document.getElementById('photoPreview').classList.remove('active');
+            document.getElementById('previewImg').src = '';
+            dropZone.style.display = 'block';
+            addLog('ℹ️ Photo removed', 'info');
+        }
+
+        function getTime() {
+            return new Date().toLocaleTimeString();
+        }
+
+        function addLog(msg, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${getTime()}</span>
+                <span class="log-${type}">${msg}</span>
+            `;
+            logsContent.appendChild(entry);
+            logsContent.parentElement.scrollTop = logsContent.parentElement.scrollHeight;
+        }
+
+        function clearLogs() {
+            logsContent.innerHTML = '';
+            addLog('Logs cleared', 'info');
+        }
+
+        function updateStatus(active) {
+            if (active) {
+                statusBadge.className = 'status-badge status-online';
+                statusBadge.innerHTML = '<span>●</span> ONLINE';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                statusBadge.className = 'status-badge status-offline';
+                statusBadge.innerHTML = '<span>●</span> OFFLINE';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        async function startBot() {
+            const adminUid = document.getElementById('adminUid').value.trim();
+            const appState = document.getElementById('appState').value.trim();
+
+            // Validation
+            if (!adminUid) {
+                addLog('❌ Please enter Admin UID', 'error');
+                return;
+            }
+
+            if (!appState) {
+                addLog('❌ Please enter AppState JSON', 'error');
+                return;
+            }
+
+            try {
+                JSON.parse(appState);
+            } catch (e) {
+                addLog('❌ Invalid AppState JSON', 'error');
+                return;
+            }
+
+            if (!selectedPhoto) {
+                addLog('❌ Please upload a photo', 'error');
+                return;
+            }
+
+            // Convert photo to base64
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const photoBase64 = e.target.result;
+                
+                addLog('🚀 Starting bot...', 'info');
+                socket.emit('start-bot', { adminUid, appState, photoBase64 });
+            };
+            reader.readAsDataURL(selectedPhoto);
+        }
+
+        function stopBot() {
+            addLog('🛑 Stopping bot...', 'warn');
+            socket.emit('stop-bot');
+        }
+
+        // Socket events
+        socket.on('bot-log', (data) => {
+            addLog(data.msg, data.type);
+        });
+
+        socket.on('bot-status', (data) => {
+            updateStatus(data.active);
+        });
+
+        socket.on('bot-error', (msg) => {
+            addLog('❌ Error: ' + msg, 'error');
+            updateStatus(false);
+        });
+
+        // Initial log
+        addLog('🟢 Dashboard ready', 'success');
+    </script>
+</body>
+</html>
