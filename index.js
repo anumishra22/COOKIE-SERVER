@@ -3,7 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const fs = require('fs-extra');
 const path = require('path');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,6 +13,7 @@ const io = socketIo(server, {
 
 let botProcess = null;
 let botActive = false;
+let currentSocket = null;
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
@@ -20,7 +21,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Ensure directories exist
 fs.ensureDirSync('./bot-data');
-fs.ensureDirSync('./public');
 
 // Routes
 app.get('/', (req, res) => {
@@ -30,6 +30,7 @@ app.get('/', (req, res) => {
 // Socket connection
 io.on('connection', (socket) => {
     console.log('✅ Client connected:', socket.id);
+    currentSocket = socket;
     
     socket.emit('bot-log', { type: 'info', msg: '🟢 Connected to server' });
 
@@ -63,13 +64,11 @@ io.on('connection', (socket) => {
             await fs.writeFile('./bot-data/appstate.json', appState);
             socket.emit('bot-log', { type: 'success', msg: '✅ AppState saved' });
 
-            // Create bot script
+            // Create bot script - NO socket.io-client, uses console.log
             socket.emit('bot-log', { type: 'info', msg: '📝 Creating bot script...' });
             
             const botScript = `const login = require("fca-prince-malhotra");
 const fs = require("fs");
-const io = require('socket.io-client');
-const socket = io('http://localhost:3000');
 
 const CONFIG = {
   LOCKED_PHOTO_PATH: "./bot-data/eric.png",
@@ -78,21 +77,17 @@ const CONFIG = {
   LOCKED_GROUPS: new Map()
 };
 
-socket.on('connect', () => {
-  console.log('BOT_CONNECTED');
-});
+console.log("BOT_STARTING");
 
 login({ appState: JSON.parse(fs.readFileSync("./bot-data/appstate.json", "utf8")) }, (err, api) => {
   if (err) {
-    socket.emit('bot-error', err.message);
+    console.error("LOGIN_ERROR:", err.message);
     process.exit(1);
   }
 
   const botID = api.getCurrentUserID();
-  socket.emit('bot-log', { type: 'success', msg: '✅ Bot logged in: ' + botID });
-  socket.emit('bot-log', { type: 'info', msg: '👤 Admin: ${adminUid}' });
-  socket.emit('bot-log', { type: 'info', msg: '📸 Photo loaded: eric.png' });
-  socket.emit('bot-log', { type: 'info', msg: '💡 Use /glock in any group to lock photo' });
+  console.log("BOT_LOGGED_IN:" + botID);
+  console.log("BOT_READY");
 
   api.listenMqtt(async (err, event) => {
     if (err || !event) return;
@@ -102,16 +97,16 @@ login({ appState: JSON.parse(fs.readFileSync("./bot-data/appstate.json", "utf8")
       
       if (!CONFIG.ADMIN_IDS.includes(senderID)) {
         api.sendMessage("❌ Sirf admin!", threadID);
-        return socket.emit('bot-log', { type: 'warn', msg: 'Unauthorized /glock by ' + senderID });
+        return console.log("UNAUTHORIZED_LOCK:" + senderID);
       }
 
       try {
         await api.changeGroupImage(fs.createReadStream(CONFIG.LOCKED_PHOTO_PATH), threadID);
         CONFIG.LOCKED_GROUPS.set(threadID, { locked: true, time: new Date().toLocaleString() });
         api.sendMessage("🔒 Group photo locked!\\nMain ab hamesha yahi photo laga dunga.", threadID);
-        socket.emit('bot-log', { type: 'success', msg: '🔒 Group ' + threadID + ' locked' });
+        console.log("GROUP_LOCKED:" + threadID);
       } catch (error) {
-        socket.emit('bot-log', { type: 'error', msg: 'Lock failed: ' + error.message });
+        console.error("LOCK_FAILED:" + error.message);
       }
     }
 
@@ -120,13 +115,13 @@ login({ appState: JSON.parse(fs.readFileSync("./bot-data/appstate.json", "utf8")
       if (!CONFIG.LOCKED_GROUPS.has(threadID)) return;
       if (author === botID) return;
 
-      socket.emit('bot-log', { type: 'warn', msg: '🚨 Change detected in ' + threadID });
+      console.log("CHANGE_DETECTED:" + threadID + ":" + author);
       try {
         await api.changeGroupImage(fs.createReadStream(CONFIG.LOCKED_PHOTO_PATH), threadID);
         api.sendMessage("🛡️ Photo protected! Reverted to locked image.", threadID);
-        socket.emit('bot-log', { type: 'success', msg: '✅ Reverted: ' + threadID });
+        console.log("PHOTO_REVERTED:" + threadID);
       } catch (error) {
-        socket.emit('bot-log', { type: 'error', msg: 'Revert failed: ' + error.message });
+        console.error("REVERT_FAILED:" + error.message);
       }
     }
   });
@@ -135,28 +130,58 @@ login({ appState: JSON.parse(fs.readFileSync("./bot-data/appstate.json", "utf8")
             await fs.writeFile('./bot-data/bot-runner.js', botScript);
             socket.emit('bot-log', { type: 'success', msg: '✅ Bot script created' });
 
-            // Start bot
+            // Start bot using spawn (better than exec)
             socket.emit('bot-log', { type: 'info', msg: '🚀 Starting FCA bot...' });
             
-            botProcess = exec('node bot-data/bot-runner.js', {
+            botProcess = spawn('node', ['bot-data/bot-runner.js'], {
                 cwd: __dirname,
-                timeout: 0
+                stdio: ['pipe', 'pipe', 'pipe']
             });
 
+            // Handle stdout
             botProcess.stdout.on('data', (data) => {
-                const msg = data.toString().trim();
-                if (msg) socket.emit('bot-log', { type: 'info', msg: msg });
+                const lines = data.toString().trim().split('\n');
+                lines.forEach(line => {
+                    if (!line) return;
+                    
+                    // Parse special log formats
+                    if (line.startsWith('BOT_LOGGED_IN:')) {
+                        const botId = line.split(':')[1];
+                        socket.emit('bot-log', { type: 'success', msg: '✅ Bot logged in: ' + botId });
+                    } else if (line.startsWith('BOT_READY')) {
+                        socket.emit('bot-log', { type: 'info', msg: '👤 Admin: ' + adminUid });
+                        socket.emit('bot-log', { type: 'info', msg: '📸 Photo loaded: eric.png' });
+                        socket.emit('bot-log', { type: 'info', msg: '💡 Use /glock in any group to lock photo' });
+                    } else if (line.startsWith('GROUP_LOCKED:')) {
+                        const threadId = line.split(':')[1];
+                        socket.emit('bot-log', { type: 'success', msg: '🔒 Group ' + threadId + ' locked' });
+                    } else if (line.startsWith('CHANGE_DETECTED:')) {
+                        const parts = line.split(':');
+                        socket.emit('bot-log', { type: 'warn', msg: '🚨 Change detected in ' + parts[1] + ' by ' + parts[2] });
+                    } else if (line.startsWith('PHOTO_REVERTED:')) {
+                        const threadId = line.split(':')[1];
+                        socket.emit('bot-log', { type: 'success', msg: '✅ Reverted: ' + threadId });
+                    } else if (line.startsWith('UNAUTHORIZED_LOCK:')) {
+                        const userId = line.split(':')[1];
+                        socket.emit('bot-log', { type: 'warn', msg: 'Unauthorized /glock by ' + userId });
+                    } else {
+                        socket.emit('bot-log', { type: 'info', msg: line });
+                    }
+                });
             });
 
+            // Handle stderr
             botProcess.stderr.on('data', (data) => {
                 const msg = data.toString().trim();
                 if (msg) socket.emit('bot-log', { type: 'error', msg: msg });
             });
 
+            // Handle errors
             botProcess.on('error', (err) => {
                 socket.emit('bot-log', { type: 'error', msg: 'Process error: ' + err.message });
             });
 
+            // Handle exit
             botProcess.on('exit', (code) => {
                 botActive = false;
                 socket.emit('bot-status', { active: false });
@@ -185,11 +210,11 @@ login({ appState: JSON.parse(fs.readFileSync("./bot-data/appstate.json", "utf8")
 
     socket.on('disconnect', () => {
         console.log('❌ Client disconnected:', socket.id);
+        currentSocket = null;
     });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log('🚀 Server running on http://localhost:' + PORT);
-    console.log('📁 Make sure public/index.html exists');
 });
