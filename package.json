@@ -1,0 +1,23 @@
+{
+  "name": "raw-cookies-fb-bot",
+  "version": "1.0.0",
+  "description": "A Facebook message sender using raw cookies and WebSocket control.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "facebook",
+    "fca",
+    "websocket",
+    "express"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "biar-fca": "latest",
+    "uuid": "^9.0.0",
+    "ws": "^8.18.0"
+  }
+}
